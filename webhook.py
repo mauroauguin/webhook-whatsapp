@@ -13,7 +13,6 @@ app = Flask(__name__)
 
 # Diccionario para almacenar el historial de conversaciones y datos de reserva
 conversation_history = {}
-reservation_data = {}
 
 # Ruta del webhook para recibir mensajes de WhatsApp
 @app.route('/webhook', methods=['GET', 'POST'])
@@ -34,25 +33,26 @@ def webhook():
         data = request.get_json()
 
         try:
-            # Obtener el mensaje y número de teléfono del usuario
+            # Obtener el mensaje, número de teléfono, correo electrónico y nombre del usuario
             message = data['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             phone_number = data['entry'][0]['changes'][0]['value']['messages'][0]['from']
+           
         except KeyError:
             return 'OK', 200
 
         
         # Obtener el contexto de Google Sheets
         context = get_context_from_sheets()
-
+       
         # Obtener el historial de la conversación
-        history = conversation_history.get(phone_number, [])
+        history = conversation_history.get(phone_number, {"history": []})
 
         # Añadir el mensaje actual al historial
-        history.append({"role": "user", "content": message})
+        history["history"].append({"role": "user", "content": message})
 
         
         # Obtener la respuesta de ChatGPT
-        gpt_response = send_to_chatgpt(history, context)
+        gpt_response = send_to_chatgpt(history["history"], context)
         print("Respuesta de GPT:", gpt_response)
 
         # Enviar gpt_response al script y obtener la respuesta
@@ -63,10 +63,10 @@ def webhook():
         response_to_user = script_response["result"]
 
         # Añadir la respuesta al historial con el rol de asistente
-        history.append({"role": "assistant", "content": response_to_user})
+        history["history"].append({"role": "assistant", "content": response_to_user})
 
         # Actualizar el historial de la conversación
-        conversation_history[phone_number] = history[-10:]  # Mantener solo los últimos 10 mensajes
+        conversation_history[phone_number] = history  # Mantener el historial y los datos del usuario
 
         # Enviar la respuesta al usuario de WhatsApp
         send_to_whatsapp(phone_number, response_to_user)
@@ -76,9 +76,16 @@ def webhook():
 def get_context_from_sheets():
     sheets_url = os.getenv('GOOGLE_SHEETS_URL')
     response = requests.get(f"{sheets_url}?action=getContext")
-    return response.json().get('context', '')
-
-
+    
+    # Imprimir el contenido de la respuesta
+    print("Contenido de la respuesta del script:", response.text)
+    
+    # Intentar decodificar la respuesta JSON
+    try:
+        return response.json().get('context', '')
+    except json.JSONDecodeError:
+        print("Error al decodificar JSON. Respuesta no válida:", response.text)
+        return ''
 
 def send_to_chatgpt(history, context):
     api_key = os.getenv('OPENAI_API_KEY')
@@ -136,6 +143,9 @@ def send_to_script(gpt_response, phone_number):
     try:
         response = requests.post(script_url, json=data)
         response.raise_for_status()
+        
+        # Imprimir el contenido de la respuesta
+        print("Contenido de la respuesta del script:", response.text)
         
         # Intentar decodificar la respuesta JSON
         try:
